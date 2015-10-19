@@ -2,46 +2,52 @@
 #use tar backup system
 
 if [ ! $1 ];then
-	echo "Usage: $0 [BACKUP_PATH](default:/home/)"
+	echo "Usage: $0 <BACKUP_PATH|BACKUP_FILE>(default:/home/[hostname_sysbk.tgz])"
 	exit -1
 fi
 
-if [ ! -f $1 -a ! -d $1 ];then
-	echo "ERROR: $1 path does't exit!"
+if [ ! -f $1 -a ! -d $(dirname $1) ];then
+	echo "ERROR: $1 path/file does't exit!"
 	exit -1
 fi
 
 if [ -f $1 ];then 
-	bp_path=`dirname $1`"/"
-	echo "WARNING: only path is needed!"
-	echo -e "\t'"$1"' has been convert to '"$bp_path"'!"
-else
+	bp_file=$1
+	echo "WARNING: The '"$1"' File has been existing!"
+	reply=""
+	while [ "$reply" != 'yes' -a "$reply" != 'no' ]
+	do
+		read  -p "\tDo you want overlay it?(yes/no):" reply
+		if [ $reply == "no" ];then
+			exit -1
+		elif [ "$reply" == "yes" ];then
+			rm -rf $bp_file
+		fi
+	done
+	bp_file=$1
+elif [ -d $1 ];then
 	bp_path=$1
 	last=$((${#bp_path} - 1))
 	if [ "${bp_path:$last}" != "/" ];then
 		bp_path=$bp_path"/"
 	fi
+	bp_file=$bp_path$(hostname)"_sysbk.tgz"
+else
+	bp_file=$1
 fi
 
 
-bp_file=$bp_path$(hostname)"_sysbk.tgz"
-read -p "Are you sure back up system to '"$bp_file"'(yes/no):" reply
-if [ $reply != "yes" ];then
-	exit -1
-fi
-
-if [ -f $bp_file ];then
-	echo  "The '"$bp_file"' has been exiting, "
-	read  -p "\tDo you want overlay it?(yes/no):" reply
-	if [ $reply != "yes" ];then
+reply=""
+while [ "$reply" != 'yes' -a "$reply" != 'no' ]
+do
+	read -p "Are you sure back up system to '"$bp_file"'(yes/no):" reply
+	if [ $reply == "no" ];then
 		exit -1
-	else
-		rm -rf $bp_file
 	fi
-	 
-fi
+done
 
 
 echo "Now, Backup sysytem!"
 tar cvpzf /home/emulation_system_backup.tgz / --exclude=/proc --exclude=/lost+found --exclude=/home --exclude=/mnt --exclude=/sys
 echo "Backup system successfully!"
+
