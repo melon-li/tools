@@ -1,4 +1,6 @@
 #!/bin/bash
+#use tar backup system
+
 if [ ! $1 ];then
 	echo "Usage: $0 [BACKUP_PATH](default:/home/)"
 	exit -1
