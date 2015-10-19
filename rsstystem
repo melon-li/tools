@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [ ! -f $1 ];then
+	echo "ERROR: BackupFile does't exit!"
+	echo "Usage: $0 [BACKUPFILE]"
+	exit -1
+fi
+
+read -p  "Are you sure to restor the system?(yes/no):" reply
+if [ "$reply" == "yes" ];then
+	#tar xvpfz /home/emulation_system_backup.tgz -C /
+	exit 0
+else
+	exit
+fi

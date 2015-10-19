@@ -1,0 +1,45 @@
+#!/bin/bash
+if [ ! $1 ];then
+	echo "Usage: $0 [BACKUP_PATH](default:/home/)"
+	exit -1
+fi
+
+if [ ! -f $1 -a ! -d $1 ];then
+	echo "ERROR: $1 path does't exit!"
+	exit -1
+fi
+
+if [ -f $1 ];then 
+	bp_path=`dirname $1`"/"
+	echo "WARNING: only path is needed!"
+	echo -e "\t'"$1"' has been convert to '"$bp_path"'!"
+else
+	bp_path=$1
+	last=$((${#bp_path} - 1))
+	if [ "${bp_path:$last}" != "/" ];then
+		bp_path=$bp_path"/"
+	fi
+fi
+
+
+bp_file=$bp_path$(hostname)"_sysbk.tgz"
+read -p "Are you sure back up system to '"$bp_file"'(yes/no):" reply
+if [ $reply != "yes" ];then
+	exit -1
+fi
+
+if [ -f $bp_file ];then
+	echo  "The '"$bp_file"' has been exiting, "
+	read  -p "\tDo you want overlay it?(yes/no):" reply
+	if [ $reply != "yes" ];then
+		exit -1
+	else
+		rm -rf $bp_file
+	fi
+	 
+fi
+
+
+echo "Now, Backup sysytem!"
+tar cvpzf /home/emulation_system_backup.tgz / --exclude=/proc --exclude=/lost+found --exclude=/home --exclude=/mnt --exclude=/sys
+echo "Backup system successfully!"
