@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# restore system from tar backupfile
 if [ ! -f $1 ];then
 	echo "ERROR: BackupFile does't exit!"
 	echo "Usage: $0 [BACKUPFILE]"
