@@ -1,15 +1,19 @@
 #!/bin/bash
 # restore system from tar backupfile
-if [ ! -f $1 ];then
+if [ "$1" == "" -o ! -f "$1" ];then
 	echo "ERROR: BackupFile does't exit!"
 	echo "Usage: $0 [BACKUPFILE]"
 	exit -1
 fi
 
-read -p  "Are you sure to restor the system?(yes/no):" reply
-if [ "$reply" == "yes" ];then
-	#tar xvpfz /home/emulation_system_backup.tgz -C /
-	exit 0
-else
-	exit
-fi
+reply=""
+while [ "$reply" != "yes" -a "$reply" != "no" ]
+do
+	read -p  "Are you sure to restore the system?(yes/no):" reply
+	if [ "$reply" == "yes" ];then
+		tar xvpfz "$1" -C /
+		exit 0
+	else
+		exit -1
+	fi
+done

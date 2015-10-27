@@ -48,6 +48,6 @@ done
 
 
 echo "Now, Backup sysytem!"
-tar cvpzf /home/emulation_system_backup.tgz / --exclude=/proc --exclude=/lost+found --exclude=/home --exclude=/mnt --exclude=/sys
+tar cvpzf $bp_file  / --exclude=/proc --exclude=/lost+found --exclude=/home --exclude=/mnt --exclude=/sys
 echo "Backup system successfully!"
 

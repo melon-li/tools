@@ -1,0 +1,33 @@
+#!/bin/bash 
+
+#@function:calculate the file/directory size, and output comfortably
+#@param: The path of file or directory
+#@author:melonli
+#@time:2015-10-27
+
+
+if [ ! -d $1 ];then
+    echo "ERROR:The '$1' PATH does not exit!"
+    echo "Usage: $0 <PATH>"	
+    exit -1
+fi
+
+g_size=$(echo 1024*1024*1024 | bc -l)
+m_size=$(echo 1024*1024 | bc -l)
+k_size=$(echo 1024 | bc -l)
+
+
+
+sum=$(find $1 | xargs ls -l | awk 'BEGIN{sum=0}{sum=sum+$5}END{print sum}' |bc -l)
+
+if [ $sum -gt $g_size ];then
+   echo $sum | awk '{printf("Size: %.2fGB\n", $1/1024/1024/1024)}'
+elif [ $sum -gt $m_size ];then
+   echo $sum | awk '{printf("Size: %.2fMB\n", $1/1024/1024)}'
+elif [ $sum -gt $k_size ];then
+   echo $sum | awk '{printf("Size: %.2fKB\n", $1/1024)}'
+else
+   echo $sum | awk '{printf("Size: %.2fB\n", $1)}'
+fi
+
+
