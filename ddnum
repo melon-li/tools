@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+#coding:utf-8 
+
+
+import sys
+import os
+import math
+
+def usage():
+    '''@function:generate a certain size text file, the file content is the special digits line numbers,shown as follow:
+         001
+         002
+         003
+     @param: the size of the text file
+     @param: The path of file or directory
+     @author:melonli
+     @time:2015-12-30''' 
+
+    print "Usage: %s <SIZE> <PATH>" % (sys.argv[0],)
+    print "\t\tSIZE Form:<integer> <B(Bytes),K(KB) or M(MB)>"
+
+def is_numstr(strnum):
+    try:
+        int(strnum)
+        return True
+    except ValueError:
+        return False
+
+
+if len(sys.argv) < 3:
+    usage()
+    sys.exit(5)
+
+size = sys.argv[1]
+size_num = size[:-1]
+if is_numstr(size_num):
+    size_num = int(size_num)
+else:
+    usage()
+    sys.exit(1)
+
+size_unit = size[-1:]
+size_unit = size_unit.upper()
+if size_unit not in ['B', 'K', 'M']:
+    usage()
+    sys.exit(2)
+
+path = sys.argv[2]
+
+path_dir = os.path.dirname(path)
+if path_dir == '':
+    path_dir = './'
+    path = './' + path 
+
+if not os.path.exists(path_dir):
+    usage()
+    sys.exit(3)
+
+if size_unit == 'B':
+    size = size_num
+elif size_unit == 'K':
+    size = size_num*1024
+else:
+    size = size_num*1024*1024
+
+num_digit = int(math.log10(size)) + 1
+
+def main():
+    file_size = 0
+    line_number = 0
+    with  open(path, 'w') as file_obj:
+       
+        while file_size < size :
+            if file_size+num_digit > size:
+                num_digit_real = size - file_size - 1
+                line_number = -1
+            else:
+                num_digit_real = num_digit - 1
+    
+            format_str = '{:0>' + str(num_digit_real) + '}'
+        
+            line_number += 1
+            if line_number == 0:
+                line_str = format_str.format(line_number)
+            else:
+                line_str = format_str.format(line_number) + '\n'
+            
+            file_obj.write(line_str)
+    
+            file_size += len(line_str)
+
+    
+if __name__ == "__main__":
+    sys.exit(main())
+
