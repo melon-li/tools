@@ -1,0 +1,2 @@
+#!/bin/bash
+ifconfig -a | grep tap |awk '{print "ip link delete",$1|"/bin/bash"}'
