@@ -45,5 +45,5 @@ function test_time(){
 }
 #for i in `seq 10 10 800`
 #do
-test_time 800
+test_time $1
 #done
