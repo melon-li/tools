@@ -43,7 +43,7 @@ function test_time(){
     
     getTiming $start $end
 }
-#for i in `seq 10 10 800`
-#do
-test_time $1
-#done
+for i in `seq 10 10 800`
+do
+test_time $i
+done
