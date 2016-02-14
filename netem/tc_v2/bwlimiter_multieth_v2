@@ -1,0 +1,74 @@
+#!/bin/bash
+if [ "$1" == "" -o "$2" == "" ];then
+    echo "Usage: $0 <nodes_max(0, 100]> <tc_fix_num>"
+    exit -1
+fi
+# arg1=start, arg2=end, format: %s.%N  
+function getTiming() {
+    start=$1
+    end=$2
+
+    start_s=$(echo $start | cut -d '.' -f 1)
+    start_ns=$(echo $start | cut -d '.' -f 2)
+    end_s=$(echo $end | cut -d '.' -f 1)
+    end_ns=$(echo $end | cut -d '.' -f 2)
+
+
+# for debug..  
+#    echo $start  
+#    echo $end  
+
+
+    time=$(( ( 10#$end_s - 10#$start_s ) * 1000 + ( 10#$end_ns / 1000000 - 10#$start_ns / 1000000 ) ))
+
+
+    echo "$time"  
+}
+
+#argv1:tc_num, argv2: netns_name, argv3:nic_name 
+function test_time(){
+    netns_name=$2
+    nic_name=$3
+    end=$((1+$1))
+    ip netns exec $netns_name tc qdisc delete dev $nic_name root >/dev/null
+    cmd=""
+    cmd=$cmd"tc qdisc add dev $nic_name root handle 1: htb default 30;"
+    cmd=$cmd"tc class add dev $nic_name parent 1: classid 1:1 htb rate 1000mbps ceil 1000mbps;"
+    for i in `seq 2 1 $end`
+    do
+    cmd=$cmd"tc class add dev $nic_name parent 1:1 classid 1:$i htb rate 10kbps ceil 10kbps;"
+    cmd=$cmd"tc filter add dev $nic_name parent 1: protocol ip prio 1 u32 match ip dst 192.168.99.1/32 flowid 1:$i;"
+    cmd=$cmd"tc qdisc add dev $nic_name parent 1:$i netem delay ""$i""ms;"
+    done
+    start=`date +%s.%N`
+       # echo $cmd
+        ip netns exec $netns_name eval "$cmd"
+    end=`date +%s.%N`
+    
+    
+    #iptables -t mangle -A POSTROUTING  -d 192.168.99.66/32 -o eth3 -j MARK --set-xmark 1001
+    #iptables -t mangle -A POSTROUTING  -d 192.168.99.126/32 -o eth3 -j MARK --set-xmark 1002
+    
+    getTiming $start $end
+}
+#for i in `seq 10 10 800`
+#do
+#test_time 800
+#done
+
+nodes_num_max=$1
+tc_num=$2
+
+
+for i in `seq 0 5 $nodes_num_max`
+do
+    str=""
+    for j in `seq $i`
+    do
+        eth_name="nic0"
+        test_time $tc_num "ns$j" $eth_name  &
+    done
+#    break
+    sleep 3
+    echo "#-$i-#-#------------------------------"
+done
