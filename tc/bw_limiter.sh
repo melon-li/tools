@@ -18,7 +18,7 @@ function getTiming() {
     time=$(( ( 10#$end_s - 10#$start_s ) * 1000 + ( 10#$end_ns / 1000000 - 10#$start_ns / 1000000 ) ))
 
 
-    echo "$time"  
+    echo "$time"  #ms
 }
 
 function test_time(){
@@ -29,9 +29,9 @@ function test_time(){
     tc class add dev eth3 parent 1: classid 1:1 htb rate 1000mbps ceil 1000mbps
     for i in `seq 2 1 $end`
     do
-    tc class add dev eth3 parent 1:1 classid "1:$i" htb rate 10kbps ceil 10kbps
-    tc filter add dev eth3 parent 1: protocol ip prio 1 u32 match ip dst "192.168.99.1/32" flowid "1:$i"
-    tc qdisc add dev eth3 parent "1:$i" netem delay "$i""ms"
+        tc class add dev eth3 parent 1:1 classid "1:$i" htb rate 10kbps ceil 10kbps
+        tc filter add dev eth3 parent 1: protocol ip prio 1 u32 match ip dst "192.168.99.1/32" flowid "1:$i"
+        tc qdisc add dev eth3 parent "1:$i" netem delay "$i""ms"
     done
     #tc filter add dev eth3 parent 1: protocol ip prio 1 handle 1001 fw classid 1:10
     #tc filter add dev eth3 parent 1: protocol ip prio 1 handle 1002 fw classid 1:20
@@ -43,7 +43,7 @@ function test_time(){
     
     getTiming $start $end
 }
-#for i in `seq 10 10 800`
-#do
-test_time 800
-#done
+for i in `seq 10 10 800`
+do
+test_time 10
+done

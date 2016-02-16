@@ -24,7 +24,6 @@ function getTiming() {
 function test_time(){
     end=$((1+$1))
     cmd='tc qdisc delete dev nic0 root;'
-    start=`date +%s.%N`
     cmd=$cmd'tc qdisc add dev nic0 root handle 1: htb default 30;'
     cmd=$cmd'tc class add dev nic0 parent 1: classid 1:1 htb rate 1000mbps ceil 1000mbps;'
     for i in `seq 2 1 $end`
@@ -35,6 +34,7 @@ function test_time(){
     done
     #tc filter add dev nic0 parent 1: protocol ip prio 1 handle 1001 fw classid 1:10
     #tc filter add dev nic0 parent 1: protocol ip prio 1 handle 1002 fw classid 1:20
+    start=`date +%s.%N`
     ip netns exec ns1 eval "$cmd"
 #   echo $cmd
     end=`date +%s.%N`
@@ -45,7 +45,7 @@ function test_time(){
     
     getTiming $start $end
 }
-for i in `seq 10 10 3000`
+for i in `seq 10 10 10000`
 do
 test_time 10
 sleep 1
