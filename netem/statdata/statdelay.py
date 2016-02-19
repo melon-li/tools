@@ -28,6 +28,7 @@ def main():
         sys.exit(-1)
 
     delays = []
+    cnt = 0
     with open(sendinfo_file, 'r') as sf:
          sinfo = sf.read()
 
@@ -51,6 +52,8 @@ def main():
     #print len(delays)
     print(delays)
     print sum(delays)/float(len(delays))
+    print sum(delays)/float(cnt)
+    print(len(delays), cnt)
           
 if __name__ == "__main__":
     sys.exit(main()) 
