@@ -49,11 +49,9 @@ def main():
                 if delay_time == 0:
                     print rl_list[0]
                 delays.append(delay_time)
-    #print len(delays)
+    print len(delays)
     print(delays)
     print sum(delays)/float(len(delays))
-    print sum(delays)/float(cnt)
-    print(len(delays), cnt)
           
 if __name__ == "__main__":
     sys.exit(main()) 
