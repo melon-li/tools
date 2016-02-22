@@ -5,6 +5,7 @@ for d in `echo ${dockers[*]}`
 do
     name=`docker exec $d hostname`
     docker exec $d cat "/tmp/log_count.""$name" &
+#    docker exec $d iptables -L &
     index=${#names[*]}
     names[$index]=$name
 done
