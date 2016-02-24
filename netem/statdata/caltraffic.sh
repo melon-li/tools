@@ -86,8 +86,8 @@ done
 avg=`echo "scale=2;$t_sum/$cnt" | bc`
 avg_rate=`echo "scale=4;$avg/11000" |bc`
 str="$t_sum $avg $avg_rate"
-echo "# total_traffic(KB) avg_traffic avg_rate" | tee $genfile_path
-echo "$str" | tee $genfile_path
+echo "# total_traffic(KB) avg_traffic avg_rate" >> $genfile_path
+echo "$str"  >>$genfile_path
 
 t_sum=`unit_readable $t_sum KB`
 avg=`unit_readable $avg KB`
