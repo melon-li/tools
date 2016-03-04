@@ -9,6 +9,11 @@ do
     names="$names$name\t"
 done
 
+sleep_time=$1
+if [ "$sleep_time" == "" ];then
+    sleep_time=2
+fi
+
 function cpuusage(){
     cpuinfo_user=()
     cpuinfo_sys=()
@@ -26,7 +31,7 @@ function cpuusage(){
         cpuinfo_idle[$i]=`cat /proc/stat | grep $name | grep color -v | grep grep -v| awk -F" " '{print $5}'`
     done
     
-    sleep 2
+    sleep $sleep_time
     user_total_new=`cat /proc/stat | grep "cpu " | grep color -v | grep grep -v| awk -F" " '{print $2}'`
     sys_total_new=`cat /proc/stat | grep "cpu " | grep color -v | grep grep -v| awk -F" " '{print $4}'`
     idle_total_new=`cat /proc/stat | grep "cpu " | grep color -v | grep grep -v| awk -F" " '{print $5}'`
