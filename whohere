@@ -1,0 +1,52 @@
+#!/bin/bash
+#find valid ip segment to let our computers connect to internet!!!
+#note: this script only is useful in BJTU IPLAB in 2016
+# trap ctrl-c and call ctrl_c()
+trap ctrl_c INT
+pname=$0
+pid=`ps axu | grep $0| grep grep -v| grep color -v| awk -F" " '{print $2}'`
+base="192.168."
+gw=`route -n | awk -F" " '{if($3=="0.0.0.0")print $2}'`
+
+function ctrl_c() {
+        #echo "** Trapped CTRL-C"
+    sudo route del default
+    sudo route add default gw "$gw"
+    sudo ifconfig eth0:254 0.0.0.0
+    echo "kill $pname"
+    kill -9 $pid
+}
+
+for i in `seq 1 254`
+do
+    flag=0
+    ip=$base"$i"".254/24"
+    sudo ifconfig eth0:254 "$ip"
+    result=`ping $base"$i"".1" -c 1 -w 1 | grep "100% packet loss"| grep grep -v | grep color -v`
+    if [ "$result" != "" ];then
+        flag=1
+        result=`ping $base"$i"".2" -c 1 -w 1 | grep "100% packet loss" | grep grep -v| grep color -v`
+    fi
+ 
+    if [ "$result"  == "" ];then
+        sudo route del default
+        if [ $flag -eq 0 ];then 
+            sudo route add default gw "$base""$i"".1"
+        else
+            sudo route add default gw "$base""$i"".2"
+        fi
+        result=`ping "202.112.144.236" -c 1 -w 1 | grep "100% packet loss" | grep grep -v| grep color -v` 
+        if [ "$result" == "" ];then 
+            if [ $flag -eq 0 ];then
+                echo "$base""$i"".1/24"    
+            else
+                echo "$base""$i"".2/24"
+            fi
+        fi
+    fi
+done
+
+sudo route del default
+sudo route add default gw "$gw"
+sudo ifconfig eth0:254 0.0.0.0
+
