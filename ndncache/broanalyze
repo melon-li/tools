@@ -141,9 +141,9 @@ do
         realy_cnt_str="$cnt"" "
         cd $tmp
         cmd="$BRO -C -r $pcap_dir${pcap_arr[$cnt]} &"
-        #eval "$cmd"
-        #pid=`ps axu | grep "${pcap_arr[$cnt]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
-        #taskset -pc $index $pid
+        eval "$cmd"
+        pid=`ps axu | grep "${pcap_arr[$cnt]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
+        taskset -pc $index $pid
         cd -
         cnt=$(($cnt +1)) 
     done
