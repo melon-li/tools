@@ -1,20 +1,30 @@
-#!/bin/bash
+#!/bin/bash 
 BRO="/usr/local/bro/bin/bro"
 
 function usage(){
-    echo "Usage:$0 <cpu_index_list> <pcap_dir>"
-    echo -e "\tFor example: $0 \"0 2 3\" /home/"
+    echo "Usage:$0 <cpu_index_list> <pcap_dir> <node_num,[0|1]>"
+    echo -e "\tFor example: $0 \"0 2 3\" /home/ 0"
 }
 
-if [ "$1" == "" -o ! -d "$2" ];then 
+if [ "$1" == "" -o ! -d "$2" -o "$3" != "0" -a "$3" != "1" ];then 
     if [ ! -d "$2" ];then
         echo "ERROR:\"$2\" does not exits!"
     fi
+
+    if echo $3 | egrep -q '^[0-9]+$';then
+        if [ "$3" != "1" -a "$3" != "0" ];then
+            echo "ERROR:\"$3\" is neither 0 or 1"
+        fi
+    else
+        echo "ERROR:\"$3\" is not a number"
+    fi
+    
     usage
     exit 1
 fi
 
 
+node_num=$3
 cpu_arr=($1)
 
 #achieve pcap_dir absolute path
@@ -23,7 +33,7 @@ pcap_dir=`pwd`
 pcap_dir="$pcap_dir""/"
 cd -
 
-#drop blank element
+#drop blank element in cpu_arr
 for i in `seq 0 $((${#cpu_arr[@]} - 1))`
 do
     if [ "${cpu_arr[$i]}" == "" ];then 
@@ -53,11 +63,22 @@ fi
 
 while [ 1 ]
 do
+    next_wait=0
     #wait and achieve pcap file array
     while [ 1 ]
     do
        pcap_list=`ls -tr "$pcap_dir" | grep "\.pcap" |grep color -v | grep grep -v`
        pcap_arr=($pcap_list)
+
+       #drop blank element in pcap_arr
+       for i in `seq 0 $((${#pcap_arr[@]} - 1))`
+       do
+           if [ "${pcap_arr[$i]}" == "" ];then
+               unset ${pcap_arr[$i]}
+           fi
+       done
+
+
        if [ ${#pcap_arr[@]} -gt 1 ];then
            break
        fi
@@ -67,6 +88,7 @@ do
 
     #dispatch command to each CPU 
     cnt=0
+    realy_cnt_str=""
     for index in `echo ${cpu_arr[*]}`
     do
         #the lastest pcap file can not be  broanylized
@@ -74,7 +96,7 @@ do
             break
         fi
          
-        #remkdir  tmp for every cpu
+        #re mkdir  tmp for every cpu
         tmp="$log_path"".tmp"$index
         if [ ! -d "$tmp" ];then 
             mkdir -p "$tmp"
@@ -82,24 +104,68 @@ do
             rm -rf "$tmp"
             mkdir -p "$tmp"
         fi
+        
+        #select a pcap to bro
+        #if basename of pcap file is even number,then bro it in node 0
+        #otherwise, bro it in node 1
+        while [ 1 ]
+        do
+            sleep 1
+            name=`basename "${pcap_arr[$cnt]}" ".pcap"`
+            if echo $name | egrep -q '^[0-9]+$';then
+                name=$(($name + 0))
+                if [ "$(($name%2))" != "$node_num" ] ;then
+                    cnt=$(($cnt +1)) 
+                else
+                    break
+                fi
+            else
+                if [ "$node_num" == "1" ];then 
+                    cnt=$(($cnt +1)) 
+                else
+                    break
+                fi
+            fi
+           
+            if [ $cnt -ge $((${#pcap_arr[@]} - 1)) ];then
+                next_wait=1
+                break
+            fi
+        done
+        
+        #there is not pcap file broed in this node, wait for next circle 
+        if [ $next_wait -eq 1 ];then 
+            break
+        fi
 
+        realy_cnt_str="$cnt"" "
         cd $tmp
         cmd="$BRO -C -r $pcap_dir${pcap_arr[$cnt]} &"
-        eval "$cmd"
-        pid=`ps axu | grep "${pcap_arr[$cnt]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
-        taskset -pc $index $pid
+        #eval "$cmd"
+        #pid=`ps axu | grep "${pcap_arr[$cnt]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
+        #taskset -pc $index $pid
         cd -
         cnt=$(($cnt +1)) 
     done
+
+    #there is not pcap file broed in this node, wait for next circle 
+    if [ $next_wait -eq 1 ];then 
+        echo -en  "\r\r\r\r\r\r\r\r\r\r\r\r\r\r\rWaiting for new pcap files!"
+        continue
+    fi
 
     #wait for end of this circle
     cnt=$(($cnt -1))
     while [ 1 ]
     do
         running_cnt=0
-        for i in `seq 0 $cnt`
+        for i in `echo $realy_cnt_str`
         do
-            pid=`ps axu | grep "${pcap_arr[$cnt]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
+            echo ${pcap_arr[$i]}
+            if [ "$i" == "" ];then
+               break 
+            fi
+            pid=`ps axu | grep "${pcap_arr[$i]}"| grep grep -v| grep color -v|awk -F" " '{print $2}'`
             if [ "$pid" != "" ];then
                 running_cnt=$(($running_cnt + 1))
             fi
@@ -115,14 +181,15 @@ do
     sleep 0.8
 
     #move "log/tmp" log files to "log"
-    echo $cnt
-    for i in `seq 0 $cnt`
+    echo $realy_cnt_str
+    cpu_cnt=0
+    for i in `echo $realy_cnt_str`
     do
         
         #remove anylized pcap file,release the storage 
         sudo rm -rf "$pcap_dir${pcap_arr[$i]}"
 
-        tmp="$log_path"".tmp""${cpu_arr[$i]}""/"
+        tmp="$log_path"".tmp""${cpu_arr[$cpu_cnt]}""/"
         name=`basename "${pcap_arr[$i]}" ".pcap"`
         echo $tmp
         ls -tr $tmp
@@ -131,6 +198,8 @@ do
             #echo "$tmp$p"
             cp "$tmp$p" "$log_path"$p".$name"
         done
+        
+        cpu_cnt=$(($cpu_cnt + 1))
     done
     
 done
