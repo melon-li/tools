@@ -1,0 +1,282 @@
+#!/bin/bash
+#功能：统计连接某个网络的所有端口的进出口流量
+#参数：网络网关IP地址或"get"字符
+GW='192.168.99.1'
+trap ctl_c INT
+pid=$(ps axu | grep $0| grep grep -v| grep color -v| awk -F" " '{print $2}')
+PS1_BK=$PS1
+ps1="export PS1=\"\u@\h:\W\[\e[31;1m\]\\\$(satstat get)\[\e[30;1m\]\$ \""
+ifstat_cmd="ifstat -t -i"
+cmd=$0
+cmd=${cmd##*/}
+LOG='/var/'${cmd##*/}'/curtraffic.KB'
+cmd_arr=()
+statfile_arr=()
+nowstamp=$(date +%s)
+eth_arr=()
+cur=0
+
+admins=$(ps axu | grep $cmd| grep grep -v | grep color -v|awk -F" " '{print $1}')
+if [[ "$1" != "get" ]];then
+for e in $(echo $admins)
+do
+    if [[ "$e" != "root" ]];then 
+        echo "ERROR: Permission denied, Please run $cmd by root"
+        exit 1
+    fi
+done
+else
+if [[ "$1" != "" ]];then 
+    GW=$1
+fi
+fi
+
+function ctl_c(){
+    export PS1=$PS1_BK
+    pids=$(ps axu | grep "$ifstat_cmd"| grep grep -v| grep color -v| awk -F" " '{print $2}')
+    for e in $(echo $pids)
+    do
+        kill -9 $e
+    done
+    kill -9 $pid
+}
+
+#input: bytes
+function readable_size(){
+    sz=$1
+    sz=${sz%.*}
+    if [[ $sz -lt 1024 ]];then
+        echo "$sz B"
+        return 0
+    fi
+     
+    if [[ $sz -lt $((1024*1024)) ]];then
+        sz=$(echo "scale=2;$sz/1024" |bc)
+        echo "$sz""KB"
+        return 0
+    fi
+
+    if [[ $sz -lt $((1024*1024*1024)) ]];then
+        sz=$(echo "scale=2;$sz/1024/1024" |bc)
+        echo "$sz""MB"
+        return 0
+    fi
+
+    if [[ $sz -lt $((1024*1024*1024*1024)) ]];then
+        sz=$(echo "scale=2;$sz/1024/1024/1024" |bc)
+        echo "$sz""GB"
+        return 0
+    fi
+     
+    sz=$(echo "scale=2;$sz/1024/1024/1024/1024" |bc)
+    echo "$sz""TB"
+    return 0
+}
+
+function is_installed(){
+    flag=$(whereis $1|awk -F":" '{print $2}')
+    if [ "$flag" == "" ];then
+        return 1
+    fi
+    return 0
+}
+
+function checkout_env(){
+    soft=$1
+    is_installed $soft
+    if [[ $? -eq 0 ]];then
+        echo "Tool $soft is installed!"
+        return 0
+    fi
+    
+    is_installed apt
+    if [[ $? -eq 0 ]];then
+        sudo apt-get install -y $soft
+        return 0
+    fi
+    
+    
+    is_installed yum
+    if [[ $? -eq 0 ]];then
+        sudo yum install -y $soft 
+        return 0
+    fi
+
+    echo "Error:apt/yum is not found!"
+    exit 1
+}
+
+function checkout_satif(){
+    #echo "start to fastly checkout"
+    cnt=0
+    if [[ ${#eth_arr[*]} -ne 0 ]];then
+        for e in ${eth_arr[*]}
+        do
+            cnt=$(($cnt+1))
+            ping -w 2 -c 1 -I $e $GW 1>/dev/null 2>/dev/null
+            if [[ $? -ne 0 ]];then
+                p=$(ps axu | grep "$ifstat_cmd $e"| grep grep -v| grep color -v| awk -F" " '{print $2}')
+                kill -9 $p
+                cnt=$(($cnt -1))
+            fi
+        done
+        if [[ $cnt -eq ${#eth_arr[*]} ]];then
+            return 0
+        fi
+    fi 
+
+
+    echo "start to slowly checkout"
+    #lo=$(ifconfig | grep "127.0.0.1" -B1|grep mtu|awk -F":" '{print $1}')
+    while [ 1 ]
+    do
+        eths=$(ifconfig | grep mtu| grep grep -v| grep color -v|awk -F" " '{print $1}')
+        eth_arr=()
+        for e in $(echo $eths) 
+        do 
+            ping -w 1 -c 1 -I ${e%:} $GW 1>/dev/null 2>/dev/null 
+            if [[ $? -eq 0 ]];then 
+                eth_arr[${#eth_arr[*]}]=${e%:}
+            fi
+        done
+        
+        if [[ ${#eth_arr[*]} -eq 0 ]];then
+            echo "ERROR,not find any interface connected to satellite link!"
+            echo -e "\tMaybe the IP for checking is wrong. Please input the IP again."
+           # echo -n ":"
+           # read GW
+           sleep 1
+        else
+            break
+        fi    
+    done
+    start_ifstat
+    echo "Network Interfaces listened: "${eth_arr[*]}
+
+}
+
+function get_current_traffic(){
+    dir=${LOG%/*}
+    if [ ! -d "$dir" ];then
+        sudo mkdir -p "$dir"
+        sudo touch $LOG
+        sudo chmod 777 $LOG
+        sudo echo "0" >$LOG
+        cur=0
+        return 0
+    fi
+    
+    if [ ! -f $LOG ];then 
+        sudo touch $LOG
+        sudo chmod 777 $LOG
+        sudo echo "0" >$LOG
+        cur=0
+        return 0
+    fi
+    cur=$(head -n 1 $LOG)
+}
+
+
+function start_ifstat(){
+    cmd_arr=()
+    statfile_arr=()
+    dir=${LOG%/*}
+    for e in $(echo ${eth_arr[*]})
+    do
+        #echo "eth=$e"
+        statfile="$dir/ifstat.$e"
+        sudo touch $statfile
+        sudo chmod 777 $statfile
+        cmd="$ifstat_cmd $e >$statfile" 
+        statfile_arr[${#statfile_arr[*]}]=$statfile
+        cmd_arr[${#cmd_arr[*]}]=$cmd
+        eval $cmd" &" 
+    done
+}
+
+function checkout_ifstat_datafile(){
+    for e in $(echo ${statfile_arr[*]})
+    do
+        size=$(ls -trl $e |awk -F" " '{print $5}')
+        size=$(echo "scale=0;$size/1024/1024" |bc)
+        if [[ 50 -lt $size ]];then
+            lines=$(cat $e|wc -l)
+            now=$(date -d @$nowstamp |awk -F" " ' {print $4}')
+            grep $now -A$lines > "/tmp/tmp.txt"
+            mv "/tmp/tmp.txt" $e
+        fi
+    done
+}
+
+function cal_sattraffic(){
+    checkout_env ifstat
+    checkout_env bc
+    checkout_satif
+    get_current_traffic
+
+    echo "Start to stat!"
+    nowstamp=$(date +%s)
+    nowstamp=$(($nowstamp-2))
+    while [ 1 ]
+    do
+       nowstamp=$(($nowstamp+1))
+       checkout_ifstat_datafile
+       checkout_satif
+       #waiting for ifstat create traffic data
+        while [ 1 ]
+        do
+            time=$(date +%s)
+            if [[ nowstamp -lt $time ]];then
+                break
+            fi
+            sleep 0.1
+        done
+
+        sum=0
+        now=$(date -d @"$nowstamp" |awk -F" " ' {print $4}')
+        for e in $(echo ${statfile_arr[*]})
+        do
+            traffic=$(grep "$now" $e| grep grep -v | grep color -v|awk -F" " '{print $2+$3}')
+            if [[ "$traffic" == "" ]];then
+                traffic=0
+            fi
+            sum=$(echo "scale=2;$traffic+$sum" |bc)
+        done
+        cur=$(echo "scale=2;$cur+$sum" |bc)
+        echo "$cur" >$LOG
+        #readable_size $(echo "scale=0;$cur*1024"|bc)
+        sleep 0.2
+    done
+}
+
+function checkout_bashrcs(){
+    users=$(cat /etc/passwd | awk -F: '$3>=500' | cut -f 1 -d :)
+    users=$users" root"
+    for e in $(echo $users)
+    do
+        home="/home/$e"
+        if [[ "$e" == "root" ]];then
+            home="/root"
+        fi
+        if [[ -d "$home" ]];then 
+            bashrc="$home/.bashrc"
+            if [[ -f $bashrc ]];then
+                is_ps1=$(grep "$cmd get" $bashrc|grep grep -v | grep color -v)
+                if [[ "$is_ps1"  == "" ]];then
+                   echo $ps1 >> $bashrc
+                   #echo $c
+                   #su $e -l -c "$c" 
+                fi
+            fi
+        fi
+    done
+}
+
+if [[ "$1" == "get" ]];then
+    cur=$(head -n 1 $LOG)
+    cur=$(readable_size $(echo "scale=0;$cur*1024"|bc))
+    echo "($cur Used)"
+else 
+    checkout_bashrcs 
+    cal_sattraffic
+fi

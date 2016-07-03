@@ -9,7 +9,7 @@ base="192.168."
 gw=`route -n | awk -F" " '{if($3=="0.0.0.0")print $2}'`
 
 function ctrl_c() {
-        #echo "** Trapped CTRL-C"
+    #echo "** Trapped CTRL-C"
     sudo route del default
     sudo route add default gw "$gw"
     sudo ifconfig eth0:254 0.0.0.0
@@ -20,7 +20,7 @@ function ctrl_c() {
 for i in `seq 1 254`
 do
     flag=0
-    ip=$base"$i"".254/24"
+    ip=$base"$i"".233/24"
     sudo ifconfig eth0:254 "$ip"
     result=`ping $base"$i"".1" -c 1 -w 1 | grep "100% packet loss"| grep grep -v | grep color -v`
     if [ "$result" != "" ];then
