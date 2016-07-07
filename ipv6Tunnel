@@ -1,0 +1,54 @@
+#!/bin/bash
+ipv6="2400:8900::f03c:91ff:fe73:aca8"
+gw="2001:da8:205:2060::1"
+cmd=$0
+name=${cmd##*/}
+admins=$(ps axu | grep $name| grep grep -v | grep color -v|awk -F" " '{print $1}')
+for e in $(echo $admins)
+do
+    if [[ "$e" != "root" ]];then 
+        echo "ERROR: Permission denied, Please run $cmd by root"
+        exit 1
+    fi
+done
+
+isdefault=$(route -6 -n | grep "$gw" |grep grep -v| grep color -v)
+if [[ "$isdefault" == "" ]];then
+    route -6 add default gw "$gw"
+fi
+
+cmd="ssh -CfNg -D 127.0.0.1:7070 root@$ipv6"
+pids=$(ps axu | grep "$cmd"|grep grep -v | grep color -v | awk -F" " '{print $2}')
+if [[ "$pids" == "" ]];then
+    eval "$cmd"
+    exit 0
+fi
+
+if [[ "$1" == "restart" ]];then
+    echo "Restart SSH Tunnel"
+    for p in $(echo $pids)
+    do
+        kill -9 $p
+        echo "Killed SSH Tunnel, pid=$p"
+    done
+    eval "$cmd"
+    echo "SSH Tunnel is running!"
+    exit 0
+fi
+
+
+if [[ "$1" == "stop" ]];then
+    echo "Stop SSH Tunnel"
+    for p in $(echo $pids)
+    do
+        echo "Killed SSH Tunnel, pid=$p"
+        kill -9 $p
+    done
+    exit 0
+fi
+
+if [ "$1" == "start" -o "$1" == "" -o "$1" == "status" ];then
+    echo "The ssh tunnel(pids=$pids) is running!"
+    exit 0
+fi
+echo -e "\tUsage: $name start|restart|stop"
