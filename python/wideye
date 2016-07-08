@@ -1,0 +1,118 @@
+#!/usr/bin/python
+'''
+Function: get and show traffic used 
+          only from Wideye Safari satellite equipment!
+author:   melonli
+date:     2016.7.8
+'''
+from requests import session
+import time
+import sys
+import os
+import socket
+
+traffic_g = ""
+
+
+def readable_size(bytes):
+    b = int(bytes)
+    if b < 1024: return str(b)+"B"
+    if b < 1024*1024: return ("%.2f" % (b/1024.0))+"KB"
+    if b < 1024*1024*1024: return ("%.2f" % (b/1024.0/1024))+"MB"
+    if b < 1024*1024*1024*1024: return ("%.2f" % (b/1024.0/1024/1024))+"GB"
+    return ("%.2f" % (b/1024.0/1024/1024/1024))+"TB"
+
+def is_ip(ip):
+    q = ip.split('.')
+    return len(q) == 4 and len(filter(lambda x: x >= 0 and x <= 255, \
+        map(int, filter(lambda x: x.isdigit(), q)))) == 4
+
+def usage():
+        print "Usage: %s [client|server] <ip> <port>" % sys.argv[0]
+        print "\tDefault: ip=127.0.0.1, port=1989"
+
+class Server:
+    gw = "192.168.1.35"
+    payload = { 
+        'username': 'admin', 
+        'password': 'qwertyui',
+        'jsEnabled': '1',
+        'cookieEnabled': '1'
+    }
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+        self.session = session()
+        self.res = self.session.post('http://' + Server.gw + '/app/auth', data=Server.payload)
+        c = self.session.cookies.get_dict()
+        self.ssid = c['sessionid']
+
+    def start(self):
+        global traffic_g
+        print "Starting Server at %s %d" % (self.ip, self.port)
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((self.ip, self.port))
+        server.listen(0)
+        old = 0
+        print "Listening for Client"
+        while True:
+            connection, address = server.accept()
+            if time.time()- old >= 1:
+                #print "get info"
+                old = time.time()
+                url = "http://"+ Server.gw + "/app/?sessionid=" + self.ssid +\
+                      "&action=atcmd&atcmd=at_imeter%3d%22PS%22&timestamp=" +\
+                       str(old)
+                res = self.session.get(url)
+                t = res.text
+                b = t.split(",")[1]
+                pos = b.rfind("OK")
+                b = b[:pos-1]
+                traffic_g = readable_size(b)
+            print traffic_g
+            connection.send(traffic_g)
+        connection.close()
+    
+    
+class Client:
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+    def show_info(self):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        print "Connect %s %d" % (self.ip, self.port)
+        client.connect((self.ip, self.port))
+        client.send("get_info")
+        print client.recv(1024)
+        client.close()
+
+def main():
+    if len(sys.argv) == 1:
+        usage()
+        sys.exit(1)
+    try:
+        ip = sys.argv[2]
+    except:
+        ip = "127.0.0.1"
+
+    try:
+        port = sys.argv[3]
+    except:
+        port = 1989
+
+    if not is_ip(ip): 
+        print "Error:IP address Format is wrong!"
+        sys.exit(1)
+
+    if sys.argv[1] == 'client':
+        c = Client(ip, port)
+        c.show_info()
+        sys.exit(0)
+    if sys.argv[1] == 'server':
+        s = Server(ip, port)
+        s.start()
+        sys.exit(0) 
+    usage()
+
+if __name__ == '__main__':
+    sys.exit(main())
