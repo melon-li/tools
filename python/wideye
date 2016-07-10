@@ -5,14 +5,15 @@ Function: get and show traffic used
 author:   melonli
 date:     2016.7.8
 '''
+
 from requests import session
 import time
 import sys
 import os
 import socket
-
-traffic_g = ""
-
+import argparse
+import atexit
+import signal
 
 def readable_size(bytes):
     b = int(bytes)
@@ -27,11 +28,202 @@ def is_ip(ip):
     return len(q) == 4 and len(filter(lambda x: x >= 0 and x <= 255, \
         map(int, filter(lambda x: x.isdigit(), q)))) == 4
 
-def usage():
-        print "Usage: %s <server|client|get> [ip] [port]" % os.path.basename(sys.argv[0])
-        print "\tDefault: ip=127.0.0.1, port=1989"
+def init_parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--client', type=str,
+          help="[start|restart|stop|status|get] Client") 
+    parser.add_argument('-s', '--server', type=str,
+          help="[start|restart|stop|status] Server") 
+    parser.add_argument('-v', '--verbose', type=int, choices=[0, 1],default=1,
+          help="verbose, 1 stands for verbose, 0 not") 
+    parser.add_argument('--ip', default="127.0.0.1",type=str, 
+          help="Server ip(client requests to this ip), default ip 127.0.0.1") 
+    parser.add_argument('--port',default="1989", type=int,
+          help="Server port(client requests to this port), default port 1989") 
+    return parser
 
-class Server:
+class Daemon(object):
+    """
+    A generic daemon class.
+
+    Usage: subclass the Daemon class and override the run() method
+    """
+    def __init__(self, pidfile, stdin=os.devnull,
+                 stdout=os.devnull, stderr=os.devnull,
+                 home_dir='.', umask=022, verbose=1, use_gevent=False):
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
+        self.pidfile = pidfile
+        self.home_dir = home_dir
+        self.verbose = verbose
+        self.umask = umask
+        self.daemon_alive = True
+        self.use_gevent = use_gevent
+
+    def daemonize(self):
+        """
+        Do the UNIX double-fork magic, see Stevens' "Advanced
+        Programming in the UNIX Environment" for details (ISBN 0201563177)
+        http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
+        """
+        try:
+            pid = os.fork()
+            if pid > 0:
+                # Exit first parent
+                sys.exit(0)
+        except OSError, e:
+            sys.stderr.write(
+                "fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+            sys.exit(1)
+
+        # Decouple from parent environment
+        os.chdir(self.home_dir)
+        os.setsid()
+        os.umask(self.umask)
+
+        # Do second fork
+        try:
+            pid = os.fork()
+            if pid > 0:
+                # Exit from second parent
+                sys.exit(0)
+        except OSError, e:
+            sys.stderr.write(
+                "fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+            sys.exit(1)
+
+        if sys.platform != 'darwin':  # This block breaks on OS X
+            # Redirect standard file descriptors
+            sys.stdout.flush()
+            sys.stderr.flush()
+            si = file(self.stdin, 'r')
+            so = file(self.stdout, 'a+')
+            if self.stderr:
+                se = file(self.stderr, 'a+', 0)
+            else:
+                se = so
+            os.dup2(si.fileno(), sys.stdin.fileno())
+            os.dup2(so.fileno(), sys.stdout.fileno())
+            os.dup2(se.fileno(), sys.stderr.fileno())
+
+        def sigtermhandler(signum, frame):
+            self.daemon_alive = False
+            sys.exit()
+
+        if self.use_gevent:
+            import gevent
+            gevent.reinit()
+            gevent.signal(signal.SIGTERM, sigtermhandler, signal.SIGTERM, None)
+            gevent.signal(signal.SIGINT, sigtermhandler, signal.SIGINT, None)
+        else:
+            signal.signal(signal.SIGTERM, sigtermhandler)
+            signal.signal(signal.SIGINT, sigtermhandler)
+
+        if self.verbose >= 1:
+            print "Started"
+
+        # Write pidfile
+        atexit.register(
+            self.delpid)  # Make sure pid file is removed if we quit
+        pid = str(os.getpid())
+        file(self.pidfile, 'w').write("%s\n" % pid)
+
+    def delpid(self):
+        if not os.path.exists(self.pidfile): return
+        try:
+            os.remove(self.pidfile)
+        except OSError,err:
+            message = "Err:%s,failed to delete pidfile %s.\n"
+            sys.stderr.write(message % (err, self.pidfile))
+            
+    def start(self, *args, **kwargs):
+        """
+        Start the daemon
+        """
+
+        if self.is_running():return
+
+        if self.verbose >= 1:
+            print "Starting..."
+
+        # Start the daemon
+        self.daemonize()
+        self.run(*args, **kwargs)
+
+    def stop(self):
+        """
+        Stop the daemon
+        """
+
+        if not self.is_running():return
+
+        if self.verbose >= 1:
+            print "Stopping..."
+
+        pid = self.get_pid()
+        # Try killing the daemon process
+        try:
+            i = 0
+            while 1:
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.1)
+                i = i + 1
+                if i % 10 == 0:
+                    os.kill(pid, signal.SIGHUP)
+        except OSError, err:
+            err = str(err)
+            if err.find("No such process") <= 0:
+                print str(err)
+                sys.exit(1)
+
+        self.delpid()
+        if self.verbose >= 1:
+            print "Stopped"
+
+    def restart(self):
+        """
+        Restart the daemon
+        """
+        self.stop()
+        self.start()
+
+    def get_pid(self):
+        try:
+            pf = file(self.pidfile, 'r')
+            pid = int(pf.read().strip())
+            pf.close()
+        except IOError:
+            pid = None
+        except SystemExit:
+            pid = None
+        return pid
+
+    def is_running(self):
+        pid = self.get_pid()
+
+        if self.verbose < 1:
+            return pid and os.path.exists('/proc/%d' % pid)
+
+        if pid is None:
+            print 'Process is stopped'
+        elif os.path.exists('/proc/%d' % pid):
+            print 'Process (pid %d) is running...' % pid
+        else:
+            print 'Process (pid %d) is killed' % pid
+
+        return pid and os.path.exists('/proc/%d' % pid)
+
+    def run(self):
+        """
+        You should override this method when you subclass Daemon.
+        It will be called after the process has been
+        daemonized by start() or restart().
+        """
+        raise NotImplementedError
+
+
+class Server(Daemon):
     gw = "192.168.1.35"
     payload = { 
         'username': 'admin', 
@@ -39,16 +231,19 @@ class Server:
         'jsEnabled': '1',
         'cookieEnabled': '1'
     }
-    def __init__(self, ip, port):
+    def __init__(self, ip, port, pidfile, stdin=os.devnull,
+                     stdout=os.devnull, stderr=os.devnull,
+                     home_dir='.', umask=022, verbose=1, use_gevent=False):
+        super(Server, self).__init__(pidfile, stdin,stdout, stderr,
+                              home_dir,umask, verbose, use_gevent)
         self.ip = ip
         self.port = port
+
+    def run(self):
         self.session = session()
         self.res = self.session.post('http://' + Server.gw + '/app/auth', data=Server.payload)
         c = self.session.cookies.get_dict()
         self.ssid = c['sessionid']
-
-    def start(self):
-        global traffic_g
         print "Starting Server at %s %d" % (self.ip, self.port)
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind((self.ip, self.port))
@@ -68,18 +263,22 @@ class Server:
                 b = t.split(",")[1]
                 pos = b.rfind("OK")
                 b = b[:pos-1]
-                traffic_g = readable_size(b)
-            #print traffic_g
-            connection.send(traffic_g)
+                traffic = readable_size(b)
+            #print traffic
+            connection.send(traffic)
         connection.close()
     
     
-class Client:
+class Client(Daemon):
     tmp = "/tmp/wideye"
-    def __init__(self, ip, port):
+    def __init__(self, ip, port, pidfile, stdin=os.devnull,
+                     stdout=os.devnull, stderr=os.devnull,
+                     home_dir='.', umask=022, verbose=1, use_gevent=False):
+        super(Client, self).__init__(pidfile, stdin,stdout, stderr,
+                              home_dir,umask, verbose, use_gevent)
         self.ip = ip
         self.port = port
-    def start(self):
+    def run(self):
         while True:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             #print "Connect %s %d" % (self.ip, self.port)
@@ -91,6 +290,7 @@ class Client:
             client.close()
             time.sleep(1)
     def get_info(self):
+        if not self.is_running():self.start()
         if not os.path.isfile(Client.tmp):return
         with open(Client.tmp, "r") as f:
             buf = f.readline()
@@ -98,39 +298,48 @@ class Client:
                 print "("+buf+")"
 
 def main():
-    if len(sys.argv) == 1:
-        usage()
-        sys.exit(1)
-    try:
-        ip = sys.argv[2]
-    except:
-        ip = "127.0.0.1"
-
-    try:
-        port = sys.argv[3]
-    except:
-        port = 1989
-
+    parser = init_parse_args()
+    args = parser.parse_args()
+    ip = args.ip
+    port = args.port
+    c = args.client
+    s = args.server
+    v = args.verbose
     if not is_ip(ip): 
         print "Error:IP address Format is wrong!"
-        usage()
+        parser.print_help()
         sys.exit(1)
 
-    if sys.argv[1] == 'client':
-        c = Client(ip, port)
-        c.start()
-        sys.exit(0)
+    cmd = ""
+    if c:
+        pidfile = "/tmp/%s-client.pid" % os.path.basename(sys.argv[0])
+        logfile = "/tmp/%s-client.log" % os.path.basename(sys.argv[0])
+        p = Client(ip, port, pidfile, verbose=v, stdout=logfile)
+        cmd = c
+    elif s:
+        pidfile = "/tmp/%s-server.pid" % os.path.basename(sys.argv[0])
+        logfile = "/tmp/%s-server.log" % os.path.basename(sys.argv[0])
+        p = Server(ip, port, pidfile, verbose=v, stdout=logfile)
+        cmd = s
+    else:
+        parser.print_help()
+        sys.exit(1)
     
-    if sys.argv[1] == 'get':
-        c = Client(ip, port)
-        c.get_info()
-        sys.exit(0)
+    if cmd == "start": 
+    #     p.run()
+        p.start()
+    elif cmd== "restart":
+        p.restart()
+    elif cmd == "stop":
+        p.stop()
+    elif cmd == "status":
+        p.is_running()
+    elif cmd == "get" and c: 
+        p.get_info()
+    else:
+        print "Error:OPTION(%s) does not exist!" % cmd
+        parser.print_help()
 
-    if sys.argv[1] == 'server':
-        s = Server(ip, port)
-        s.start()
-        sys.exit(0) 
-    usage()
-
+    sys.exit(0)
 if __name__ == '__main__':
     sys.exit(main())
