@@ -240,35 +240,51 @@ class Server(Daemon):
         self.port = port
 
     def run(self):
-        self.session = session()
-        self.res = self.session.post('http://' + Server.gw + '/app/auth', data=Server.payload)
-        c = self.session.cookies.get_dict()
-        self.ssid = c['sessionid']
         print "Starting Server at %s %d" % (self.ip, self.port)
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind((self.ip, self.port))
         server.listen(0)
         old = 0
         print "Listening for Client"
+        traffic = ""
+        self.create_session()
         while True:
-            connection, address = server.accept()
             if time.time()- old >= 1:
                 #print "get info"
                 old = time.time()
-                url = "http://"+ Server.gw + "/app/?sessionid=" + self.ssid +\
-                      "&action=atcmd&atcmd=at_imeter%3d%22PS%22&timestamp=" +\
-                       str(old)
-                res = self.session.get(url)
-                t = res.text
-                b = t.split(",")[1]
-                pos = b.rfind("OK")
-                b = b[:pos-1]
-                traffic = readable_size(b)
+                try:
+                    traffic = self.read_traffic()
+                except:
+                    traffic = ""
+                    time.sleep(1)
+                    self.create_session()
             #print traffic
+            connection, address = server.accept()
             connection.send(traffic)
         connection.close()
     
+    def create_session(self):
+        self.session = session()
+        while True:
+            try:
+                self.res = self.session.post('http://' + Server.gw + '/app/auth', data=Server.payload, timeout=1)
+                c = self.session.cookies.get_dict()
+                self.ssid = c['sessionid']
+                break
+            except:
+                time.sleep(1)
     
+    def read_traffic(self):
+        url = "http://"+ Server.gw + "/app/?sessionid=" + self.ssid +\
+              "&action=atcmd&atcmd=at_imeter%3d%22PS%22&timestamp=" +\
+               str(time.time())
+        res = self.session.get(url, timeout=1)
+        t = res.text
+        b = t.split(",")[1]
+        pos = b.rfind("OK")
+        b = b[:pos-1]
+        return readable_size(b)
+
 class Client(Daemon):
     tmp = "/tmp/wideye"
     def __init__(self, ip, port, pidfile, stdin=os.devnull,
@@ -279,16 +295,23 @@ class Client(Daemon):
         self.ip = ip
         self.port = port
     def run(self):
+        cnt = 0
         while True:
-            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            #print "Connect %s %d" % (self.ip, self.port)
-            client.connect((self.ip, self.port))
-            client.send("get_info")
-            info = client.recv(1024)
+            try:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                #print "Connect %s %d" % (self.ip, self.port)
+                client.connect((self.ip, self.port))
+                client.send("get_info")
+                client.settimeout(2.0)
+                info = client.recv(1024)
+                client.close()
+                cnt = cnt + 1
+            except:
+                info = "Off-line"
             with open(Client.tmp, 'w') as f:
                 f.write(info)
-            client.close()
             time.sleep(1)
+
     def get_info(self):
         if not self.is_running():self.start()
         if not os.path.isfile(Client.tmp):return
@@ -326,7 +349,7 @@ def main():
         sys.exit(1)
     
     if cmd == "start": 
-    #     p.run()
+    #    p.run()
         p.start()
     elif cmd== "restart":
         p.restart()

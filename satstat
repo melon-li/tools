@@ -244,7 +244,7 @@ function cal_sattraffic(){
         done
         cur=$(echo "scale=2;$cur+$sum" |bc)
         echo "$cur" >$LOG
-        readable_size $(echo "scale=0;$cur*1024"|bc)
+        #readable_size $(echo "scale=0;$cur*1024"|bc)
         sleep 0.2
     done
 }
