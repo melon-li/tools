@@ -101,8 +101,8 @@ def main():
                        line = f.readline()
                        continue
                line = f.readline()
-        if (int(askedfor) >= 0 and int(time) >= 0 and
-           int(requests) >=0 and int(hits)) >0:
+        if (int(askedfor) > 0 and int(time) >= 0 and
+           int(requests) >0 and int(hits)) >=0:
            throughput.append("%.2f" % (float(askedfor)*1500*8*1000/float(time)/1024/1024/1024))
            hit_ratio.append("%.2f" % (float(hits)*100/float(requests)))
         else:
