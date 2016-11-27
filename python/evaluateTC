@@ -1,0 +1,150 @@
+#!/usr/bin/python
+#coding=utf-8
+"""Evaluate the performance of Linux Traffic Control (TC)
+
+author:   melonli
+date:     2016.11.27
+"""
+
+from requests import session
+import time
+import sys
+import os
+import socket
+import argparse
+import atexit
+import signal
+
+def readable_size(bytes):
+    b = int(bytes)
+    if b < 1024: return str(b)+"B"
+    if b < 1024*1024: return ("%.2f" % (b/1024.0))+"KB"
+    if b < 1024*1024*1024: return ("%.2f" % (b/1024.0/1024))+"MB"
+    if b < 1024*1024*1024*1024: return ("%.2f" % (b/1024.0/1024/1024))+"GB"
+    return ("%.2f" % (b/1024.0/1024/1024/1024))+"TB"
+
+def is_ip(ip):
+    q = ip.split('.')
+    return len(q) == 4 and len(filter(lambda x: x >= 0 and x <= 255, \
+        map(int, filter(lambda x: x.isdigit(), q)))) == 4
+
+def init_parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--client', type=str,
+          help="[start|restart|stop|status|get] Client") 
+    parser.add_argument('-s', '--server', type=str,
+          help="[start|restart|stop|status] Server") 
+    parser.add_argument('-v', '--verbose', type=int, choices=[0, 1],default=1,
+          help="verbose, 1 stands for verbose, 0 not") 
+    parser.add_argument('--ip', default="127.0.0.1",type=str, 
+          help="Server ip(client requests to this ip), default ip 127.0.0.1") 
+    parser.add_argument('--port',default="1989", type=int,
+          help="Server port(client requests to this port), default port 1989") 
+    return parser
+
+
+class Server(Daemon):
+    """The Server listening for UDP Client.
+
+    Attributes:
+        ip: The ipv4 address for staring server in local host. 
+        port: The port of the ip address.
+    """
+
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
+    def run(self):
+        print "Starting Server at %s %d" % (self.ip, self.port)
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((self.ip, self.port))
+        server.listen(0)
+        old = 0
+        print "Listening for Client"
+        traffic = ""
+        while True:
+            #print traffic
+            connection, address = server.accept()
+            connection.send(traffic)
+        connection.close()
+    
+
+class Client(Daemon):
+    """The UDP Client.
+
+    Attributes:
+        ip: The ipv4 address of  server in remote host. 
+        port: The port of the remote server.
+    """
+
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
+    def run(self):
+        cnt = 0
+        while True:
+            try:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                #print "Connect %s %d" % (self.ip, self.port)
+                client.connect((self.ip, self.port))
+                client.send("send_test")
+                s = time.time()
+                client.settimeout(2.0)
+                info = client.recv(1024)
+                e = time.time()
+                print("Start=%s\nEnd =%s" % (s, e))
+                client.close()
+                cnt = cnt + 1
+            except:
+                info = "Off-line"
+            time.sleep(1)
+
+def main():
+    parser = init_parse_args()
+    args = parser.parse_args()
+    ip = args.ip
+    port = args.port
+    c = args.client
+    s = args.server
+    v = args.verbose
+    if not is_ip(ip): 
+        print "Error:IP address Format is wrong!"
+        parser.print_help()
+        sys.exit(1)
+
+    cmd = ""
+    if c:
+        pidfile = "/tmp/%s-client.pid" % os.path.basename(sys.argv[0])
+        logfile = "/tmp/%s-client.log" % os.path.basename(sys.argv[0])
+        p = Client(ip, port, pidfile, verbose=v, stdout=logfile)
+        cmd = c
+    elif s:
+        pidfile = "/tmp/%s-server.pid" % os.path.basename(sys.argv[0])
+        logfile = "/tmp/%s-server.log" % os.path.basename(sys.argv[0])
+        p = Server(ip, port, pidfile, verbose=v, stdout=logfile)
+        cmd = s
+    else:
+        parser.print_help()
+        sys.exit(1)
+    
+    if cmd == "start": 
+   #     p.run()
+        p.start()
+    elif cmd== "restart":
+        p.restart()
+    elif cmd == "stop":
+        p.stop()
+    elif cmd == "status":
+        p.is_running()
+    elif cmd == "get" and c: 
+        p.get_info()
+    else:
+        print "Error:OPTION(%s) does not exist!" % cmd
+        parser.print_help()
+
+    sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(main())
+
