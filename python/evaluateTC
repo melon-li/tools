@@ -31,19 +31,24 @@ def is_ip(ip):
 def init_parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--client', type=str,
-          help="[start|restart|stop|status|get] Client") 
+          help="[ping] Server") 
     parser.add_argument('-s', '--server', type=str,
-          help="[start|restart|stop|status] Server") 
-    parser.add_argument('-v', '--verbose', type=int, choices=[0, 1],default=1,
+          help="[start] Server") 
+    parser.add_argument('-v', '--verbose', type=int, choices=[0, 1],default=0,
           help="verbose, 1 stands for verbose, 0 not") 
     parser.add_argument('--ip', default="127.0.0.1",type=str, 
-          help="Server ip(client requests to this ip), default ip 127.0.0.1") 
+          help="Server ip(client requests to this ip), default ip 127.0.0.1.") 
     parser.add_argument('--port',default="1989", type=int,
-          help="Server port(client requests to this port), default port 1989") 
+          help="Server port(client requests to this port), default port 1989.") 
+    parser.add_argument('--cnt',default="3", type=int,
+          help="count, Stop after sending count ECHO_REQUEST packets.") 
+    parser.add_argument('--size',default="56", type=int,
+          help="packetsize,Specifies the number of data bytes to be sent.") 
+
     return parser
 
 
-class Server(Daemon):
+class Server():
     """The Server listening for UDP Client.
 
     Attributes:
@@ -51,26 +56,23 @@ class Server(Daemon):
         port: The port of the ip address.
     """
 
-    def __init__(self, ip, port):
-        self.ip = ip
-        self.port = port
+    def __init__(self, ip, port, verbose):
+        self.addr = (ip, port)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(self.addr)
 
     def run(self):
-        print "Starting Server at %s %d" % (self.ip, self.port)
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind((self.ip, self.port))
-        server.listen(0)
-        old = 0
+        s = self.server
+        print "Starting Server at %s %d" % self.addr
         print "Listening for Client"
-        traffic = ""
         while True:
-            #print traffic
-            connection, address = server.accept()
-            connection.send(traffic)
-        connection.close()
+            buf, addr = s.recvfrom(1500)
+            print 'Received from %s:%s' % addr
+            s.sendto(buf, addr)
     
 
-class Client(Daemon):
+class Client():
     """The UDP Client.
 
     Attributes:
@@ -78,28 +80,77 @@ class Client(Daemon):
         port: The port of the remote server.
     """
 
-    def __init__(self, ip, port):
-        self.ip = ip
-        self.port = port
+    def __init__(self, ip, port, verbose):
+        self.addr = (ip, port)
+        self.v = verbose
+        self.client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def run(self):
+    def ping(self, count=3, size=56):
         cnt = 0
-        while True:
+        failed = 0
+        times = {}
+
+        print("PING %s (%s) %d(%d) bytes of data" %
+              (self.addr[0], 
+               self.addr[0],
+               size,
+               size+8,
+              ))
+        while cnt < count:
+            cnt = cnt + 1
+            c = self.client
+            info = "Succeeded to ping"
             try:
-                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                #print "Connect %s %d" % (self.ip, self.port)
-                client.connect((self.ip, self.port))
-                client.send("send_test")
-                s = time.time()
-                client.settimeout(2.0)
-                info = client.recv(1024)
-                e = time.time()
-                print("Start=%s\nEnd =%s" % (s, e))
-                client.close()
-                cnt = cnt + 1
+                p = self.assemble_pingpacket(cnt, size)
+                c.sendto(p, self.addr)
+                ts = time.time()
+                c.settimeout(2.0)
+                info = c.recv(1024)
+                te = time.time()
+                if self.v: print("Received Info: %s" % info)
+                print("%d bytes from %s: icmp_seq=%d time=%.2f ms" % 
+                      (len(info), self.addr[0], cnt, float(te-ts)*1000))
             except:
-                info = "Off-line"
+                failed = failed + 1
+                info = "Failed to ping"
+            if self.v: print info
             time.sleep(1)
+
+    def assemble_pingpacket(self, seq, size):
+        """Assemble packet for ping function.
+
+        Assembling Format: #_seq_seq_...seq_$. 
+        
+        Args:
+            seq: int, the sequence of performing ping function.
+            size: int, the size of the packet load. 
+                 Its value must be larger than len(seq)+ 4.
+
+        Returns:
+            The packet string, if failed raise error.
+       
+        Raises:
+            ASSEMBLE_FAILURE: failed to assemble ping packet
+        """    
+        seq = str(seq)
+        if size < (len(seq) + 4):
+            if self.v: print("The packet size is less than len(seq) + 4")
+            raise Exception("ASSEMBLE_FAILURE")
+
+        l = len(seq) + 1
+        cnt = (size - 3)/l 
+        left = (size - 3)%l
+
+        buf = ['#']
+        buf.extend([seq]*cnt)
+        p = "_".join(buf)
+        p = p + "_"*(left + 1) + "$"
+        if self.v: print p
+        return p 
+        
+
+    def __del__(self):
+        self.client.close()
 
 def main():
     parser = init_parse_args()
@@ -109,6 +160,8 @@ def main():
     c = args.client
     s = args.server
     v = args.verbose
+    cnt = args.cnt
+    size = args.size
     if not is_ip(ip): 
         print "Error:IP address Format is wrong!"
         parser.print_help()
@@ -116,34 +169,19 @@ def main():
 
     cmd = ""
     if c:
-        pidfile = "/tmp/%s-client.pid" % os.path.basename(sys.argv[0])
-        logfile = "/tmp/%s-client.log" % os.path.basename(sys.argv[0])
-        p = Client(ip, port, pidfile, verbose=v, stdout=logfile)
-        cmd = c
+        prog = Client(ip, port, v)
+        if c == "ping":
+            prog.ping(cnt, size)
+        else:
+            parser.print_help()
+            sys.exit(1)
     elif s:
-        pidfile = "/tmp/%s-server.pid" % os.path.basename(sys.argv[0])
-        logfile = "/tmp/%s-server.log" % os.path.basename(sys.argv[0])
-        p = Server(ip, port, pidfile, verbose=v, stdout=logfile)
-        cmd = s
+        prog = Server(ip, port)
+        prog.run() 
     else:
         parser.print_help()
         sys.exit(1)
     
-    if cmd == "start": 
-   #     p.run()
-        p.start()
-    elif cmd== "restart":
-        p.restart()
-    elif cmd == "stop":
-        p.stop()
-    elif cmd == "status":
-        p.is_running()
-    elif cmd == "get" and c: 
-        p.get_info()
-    else:
-        print "Error:OPTION(%s) does not exist!" % cmd
-        parser.print_help()
-
     sys.exit(0)
 if __name__ == '__main__':
     sys.exit(main())
