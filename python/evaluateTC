@@ -6,14 +6,14 @@ author:   melonli
 date:     2016.11.27
 """
 
-from requests import session
-import time
 import sys
 import os
+import time
 import socket
 import argparse
 import atexit
 import signal
+import threading
 
 def readable_size(bytes):
     b = int(bytes)
@@ -36,6 +36,8 @@ def init_parse_args():
           help="[start] Server") 
     parser.add_argument('-v', '--verbose', type=int, choices=[0, 1],default=0,
           help="verbose, 1 stands for verbose, 0 not") 
+    parser.add_argument('-t', '--timeout', type=int, default=2,
+          help="Time to wait for a response, in seconds.") 
     parser.add_argument('--ip', default="127.0.0.1",type=str, 
           help="Server ip(client requests to this ip), default ip 127.0.0.1.") 
     parser.add_argument('--port',default="1989", type=int,
@@ -78,18 +80,26 @@ class Client():
     Attributes:
         ip: The ipv4 address of  server in remote host. 
         port: The port of the remote server.
+        cmd: The command string.
+        verbose: If verbose is 1, print debug information;otherwise not.
     """
 
-    def __init__(self, ip, port, verbose):
+    def __init__(self, ip, port, cmd, verbose, count=3, size=56, timeout=2):
         self.addr = (ip, port)
+        self.cmd = cmd
+        self.count = count
+        self.size = size
         self.v = verbose
+        self.timeout = timeout
+        self.failed = 0
+        self.succeeded = 0 
+        # Dictory Type,{seq(int): sending_timestamp(float)}
+        self.times = {}
         self.client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def ping(self, count=3, size=56):
+    def ping_send(self, count=3, size=56):
+        """Send the simulating ping packets by socket udp."""
         cnt = 0
-        failed = 0
-        times = {}
-
         print("PING %s (%s) %d(%d) bytes of data" %
               (self.addr[0], 
                self.addr[0],
@@ -99,22 +109,49 @@ class Client():
         while cnt < count:
             cnt = cnt + 1
             c = self.client
-            info = "Succeeded to ping"
+            info = "Succeeded to send ping"
             try:
                 p = self.assemble_pingpacket(cnt, size)
                 c.sendto(p, self.addr)
-                ts = time.time()
-                c.settimeout(2.0)
-                info = c.recv(1024)
-                te = time.time()
-                if self.v: print("Received Info: %s" % info)
-                print("%d bytes from %s: icmp_seq=%d time=%.2f ms" % 
-                      (len(info), self.addr[0], cnt, float(te-ts)*1000))
+                self.times[cnt] = time.time()
             except:
-                failed = failed + 1
-                info = "Failed to ping"
+                self.failed = self.failed + 1
+                info = "Failed to send ping"
             if self.v: print info
             time.sleep(1)
+
+    def ping_rec(self, timeout=2):
+        """Receive the response of ping.
+        
+        Args:
+            timeout: int. Time to wait for a response, in seconds.
+        """
+        ts = time.time()
+        while True:
+            failed = 0
+            info,addr = self.client.recvfrom(self.size+30)
+            te = time.time()
+            if self.v: print("The infor received from %s: %s" %(addr[0],info))
+            if info:
+                if info[0] == "#" and info[-1] == "$":
+                    pos = info.find("_", 2)
+                    if pos > 2: 
+                        cnt = info[2:pos]
+                    else:
+                        failed = 1
+            else:
+                failed = 1
+
+            if failed == 1: 
+                if te-ts > timeout: break
+                ts = te
+                continue
+
+            ts = te
+            self.succeeded = self.succeeded + 1    
+            print("%d bytes from %s: icmp_seq=%s time=%.2f ms" % 
+                  (len(info), self.addr[0], cnt, float(te-self.times[int(cnt)])*1000))
+            if int(cnt) >= self.count: break
 
     def assemble_pingpacket(self, seq, size):
         """Assemble packet for ping function.
@@ -148,6 +185,28 @@ class Client():
         if self.v: print p
         return p 
         
+    def run(self):
+        cmd = self.cmd
+        if cmd == "ping":
+            ts = time.time()
+            s = threading.Thread(target=self.ping_send, args=(self.count, self.size))
+            c = threading.Thread(target=self.ping_rec, args=(self.timeout,))
+            s.start()
+            c.start()
+            s.join()
+            c.join()
+            te = time.time()
+            print("--- %s ping statistics ---" % self.addr[0])
+            print("%d packets transmitted, %d received, %.2f%% packet loss, time %.2f ms"  %
+                  (self.count, 
+                   self.succeeded, 
+                   (float(self.count-self.succeeded)/self.count),
+                   (te-ts)
+                  ))
+        else:
+           if self.v: 
+               print("Error:The option is not supported in Client class.") 
+           raise Exception("UNSUPPORTED_OPTION")
 
     def __del__(self):
         self.client.close()
@@ -162,6 +221,7 @@ def main():
     v = args.verbose
     cnt = args.cnt
     size = args.size
+    timeout = args.timeout
     if not is_ip(ip): 
         print "Error:IP address Format is wrong!"
         parser.print_help()
@@ -169,14 +229,14 @@ def main():
 
     cmd = ""
     if c:
-        prog = Client(ip, port, v)
-        if c == "ping":
-            prog.ping(cnt, size)
-        else:
+        prog = Client(ip, port, c, v, cnt, size, timeout)
+        try:
+            prog.run()
+        except:
             parser.print_help()
             sys.exit(1)
     elif s:
-        prog = Server(ip, port)
+        prog = Server(ip, port, v)
         prog.run() 
     else:
         parser.print_help()
