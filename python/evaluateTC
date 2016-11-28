@@ -15,18 +15,74 @@ import atexit
 import signal
 import threading
 
-def readable_size(bytes):
-    b = int(bytes)
-    if b < 1024: return str(b)+"B"
-    if b < 1024*1024: return ("%.2f" % (b/1024.0))+"KB"
-    if b < 1024*1024*1024: return ("%.2f" % (b/1024.0/1024))+"MB"
-    if b < 1024*1024*1024*1024: return ("%.2f" % (b/1024.0/1024/1024))+"GB"
-    return ("%.2f" % (b/1024.0/1024/1024/1024))+"TB"
+LINK_RATE = '1Gbps'
+PKT_HEADER = 28
+
+def readable_time(t):
+    b = float(t)
+    if b < 1: return "%.2f ms" % (b*1000)
+    if b < 60: return "%.2f s" % (b)
+    if b < 360: return "%.2f min" % (b/60)
+    return "%.2f h" % (b/60/60)
 
 def is_ip(ip):
     q = ip.split('.')
     return len(q) == 4 and len(filter(lambda x: x >= 0 and x <= 255, \
         map(int, filter(lambda x: x.isdigit(), q)))) == 4
+
+def get_rate(rate_str, verbose):
+    """Get the rate from the rate string.
+    
+    Args:
+        rate_str: type(str). The rate string. 
+                  The rate unit can be [bps|Kbps|Mbps|Gbps|Bps|KBps|MBps|GBps].
+
+    Returns:
+        type(int): The value of rate_str, the unit is bps
+    """ 
+    if verbose: print("The inputted rate_str=%s" % rate_str)
+    rs = rate_str.strip()
+    if len(rs) < 4: 
+        print("The rate_str is not enough long")
+        raise Exception("WRONG_OPTION")
+    offset = -1
+    while True:
+        if abs(offset) > len(rs):
+            print("The \"%s\" is wrong rate format" % rs)
+            raise Exception("WRONG_OPTION")
+        v = rs[offset]
+        try:
+            int(v)
+            break
+        except:
+            offset = offset - 1
+            pass
+    value = float(rs[0:(offset+1)])
+    unit = rs[(offset+1):]
+    unit = unit.strip()
+    if len(unit) < 3 or unit[-2:] != 'ps':
+        print("The rate unit is error(ps)")
+        raise Exception("WRONG_OPTION")
+    b = unit[-3]
+    if b == "B":
+        value = value*8
+    elif b == "b":
+        pass
+    else:
+        print("The rate unit is error(B/b)")
+        raise Exception("WRONG_OPTION")
+ 
+    b = unit[-4]
+    if b == 'K':
+        value = value*1024
+    elif b == 'M':
+        value = value*1024*1024
+    elif b == 'G':
+        value = value*1024*1024*1024
+    else:
+        pass
+    if verbose: print("The rate converted unit = %d" % value)
+    return value
 
 def init_parse_args():
     parser = argparse.ArgumentParser()
@@ -44,10 +100,17 @@ def init_parse_args():
           help="Server port(client requests to this port), default port 1989.") 
     parser.add_argument('--cnt',default="3", type=int,
           help="count, Stop after sending count ECHO_REQUEST packets.") 
+    parser.add_argument('--rate',default="10Mbps", type=str,
+          help="The rate to send the data packet including ip header."
+               "The unit can be [bps|Kbps|Mbps|Gbps|Bps|KBps|MBps|GBps] ") 
+    parser.add_argument('--be',default="0", type=float,
+          help="Bits error ratio, "
+               "The bit error ratio value which we will set the link as.") 
     parser.add_argument('--size',default="56", type=int,
           help="packetsize,Specifies the number of data bytes to be sent.") 
 
     return parser
+
 
 
 class Server():
@@ -83,54 +146,60 @@ class Client():
         cmd: The command string.
         verbose: If verbose is 1, print debug information;otherwise not.
     """
-
-    def __init__(self, ip, port, cmd, verbose, count=3, size=56, timeout=2):
+    
+    def __init__(self, ip, port, cmd, verbose, 
+                 count=3, size=56, timeout=2, s_rate="10Mbps"):
         self.addr = (ip, port)
         self.cmd = cmd
         self.count = count
         self.size = size
         self.v = verbose
         self.timeout = timeout
+        self.lastrec_time = time.time()
+        self.s_rate = s_rate
         self.failed = 0
         self.succeeded = 0 
         # Dictory Type,{seq(int): sending_timestamp(float)}
         self.times = {}
         self.client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def ping_send(self, count=3, size=56):
+    def ping_send(self, count=3, size=56, s_rate='10Mbps'):
         """Send the simulating ping packets by socket udp."""
         cnt = 0
+        s_time = 0
         print("PING %s (%s) %d(%d) bytes of data" %
               (self.addr[0], 
                self.addr[0],
                size,
-               size+8,
+               size + PKT_HEADER,
               ))
         while cnt < count:
             cnt = cnt + 1
             c = self.client
             info = "Succeeded to send ping"
             try:
-                p = self.assemble_pingpacket(cnt, size)
+                p = self.assemble_packet(cnt, size)
+                self.set_rate(s_time, size + PKT_HEADER, s_rate, LINK_RATE)
                 c.sendto(p, self.addr)
-                self.times[cnt] = time.time()
+                s_time = time.time()
+                self.times[cnt] = s_time
             except:
                 self.failed = self.failed + 1
                 info = "Failed to send ping"
             if self.v: print info
-            time.sleep(1)
+            #time.sleep(1)
 
-    def ping_rec(self, timeout=2):
+    def ping_rec(self):
         """Receive the response of ping.
         
         Args:
             timeout: int. Time to wait for a response, in seconds.
         """
-        ts = time.time()
+        self.lastrec_time = time.time()
         while True:
             failed = 0
             info,addr = self.client.recvfrom(self.size+30)
-            te = time.time()
+            self.lastrec_time = time.time()
             if self.v: print("The infor received from %s: %s" %(addr[0],info))
             if info:
                 if info[0] == "#" and info[-1] == "$":
@@ -138,22 +207,43 @@ class Client():
                     if pos > 2: 
                         cnt = info[2:pos]
                     else:
-                        failed = 1
+                        continue
             else:
-                failed = 1
-
-            if failed == 1: 
-                if te-ts > timeout: break
-                ts = te
                 continue
 
-            ts = te
-            self.succeeded = self.succeeded + 1    
-            print("%d bytes from %s: icmp_seq=%s time=%.2f ms" % 
-                  (len(info), self.addr[0], cnt, float(te-self.times[int(cnt)])*1000))
-            if int(cnt) >= self.count: break
 
-    def assemble_pingpacket(self, seq, size):
+            self.succeeded = self.succeeded + 1    
+            if not self.times.has_key(int(cnt)): 
+                print("The seq=%s does not exist in self.times" % cnt)
+                continue
+            print("%d bytes from %s: icmp_seq=%s time=%s" % 
+                  (len(info), 
+                   self.addr[0], 
+                   cnt, 
+                   readable_time(self.lastrec_time - self.times[int(cnt)])))
+            if int(cnt) >= self.count: break
+    
+    def ping_timeout(self, timeout):
+        """Checkout whether  program is timeout.
+ 
+        If the ping_rec is timeout, kill -9 it.
+        """
+        ts = time.time()
+        while True:
+            if self.succeeded >= self.count: break
+            cur = time.time()
+            if cur-self.lastrec_time > timeout: 
+                p = os.getpid()
+                self.print_stat(ts, cur)
+                try:
+                    print 'The ping_rec is timeout (%.2f)' % timeout
+                    if self.v: print("Attempt to kill %d" % p)
+                    os.kill(p, signal.SIGKILL)
+                except OSError, e:
+                    pass
+            time.sleep(1)
+        
+    def assemble_packet(self, seq, size):
         """Assemble packet for ping function.
 
         Assembling Format: #_seq_seq_...seq_$. 
@@ -169,6 +259,8 @@ class Client():
         Raises:
             ASSEMBLE_FAILURE: failed to assemble ping packet
         """    
+        if self.v: print("Starting to assemble the %d bytes seq=%d" %
+                         (size, seq))
         seq = str(seq)
         if size < (len(seq) + 4):
             if self.v: print("The packet size is less than len(seq) + 4")
@@ -182,34 +274,90 @@ class Client():
         buf.extend([seq]*cnt)
         p = "_".join(buf)
         p = p + "_"*(left + 1) + "$"
-        if self.v: print p
+        if self.v: print("Finished to assemble: %s" % p)
         return p 
+    
+    def set_rate(self, s_time, p_size, s_rate, l_rate):
+        """Set the sending rate as s_rate.
+        
+        Args:
+            s_time: type(float). The sending time of the data packet.
+            s_rate: type(str). The sending rate required by us.
+            p_size: type(int). The size of data packet (Bytes).
+            l_rate: type(str). The maximum rate of sending link, 
+                    namely, bandwidth.
+        """
+        sr = get_rate(s_rate, self.v)
+        lr = get_rate(l_rate, self.v)
+        nt = float(p_size*8)/sr
+        st = float(p_size*8)/lr
+        wt = nt - st
+        while True:
+            cur = time.time()
+            if cur >= wt + s_time: break
+            time.sleep(wt/10)
         
     def run(self):
         cmd = self.cmd
         if cmd == "ping":
             ts = time.time()
-            s = threading.Thread(target=self.ping_send, args=(self.count, self.size))
-            c = threading.Thread(target=self.ping_rec, args=(self.timeout,))
+            if self.v: print("Starting time: %s" % ts)
+            s = threading.Thread(target=self.ping_send,
+                                 args=(self.count, self.size, self.s_rate))
+            c = threading.Thread(target=self.ping_rec)
+            t = threading.Thread(target=self.ping_timeout, 
+                                 args=(self.timeout,))
             s.start()
             c.start()
+            t.start()
             s.join()
             c.join()
+            t.join()
             te = time.time()
-            print("--- %s ping statistics ---" % self.addr[0])
-            print("%d packets transmitted, %d received, %.2f%% packet loss, time %.2f ms"  %
-                  (self.count, 
-                   self.succeeded, 
-                   (float(self.count-self.succeeded)/self.count),
-                   (te-ts)
-                  ))
+            if self.v: print("Ending time: %s" % te)
+            self.print_stat(ts, te)
         else:
            if self.v: 
                print("Error:The option is not supported in Client class.") 
            raise Exception("UNSUPPORTED_OPTION")
 
+    def print_stat(self,ts, te):
+        """Print the statistics information of ping.
+      
+        Args:
+            ts: type(float). The starting time.
+            te: type(float). The ending time.
+        """   
+        pmiss_rate = float(self.count-self.succeeded)/self.count
+        bmiss_rate = pmiss_rate/(8*(self.size+PKT_HEADER))
+        print("--- %s ping statistics ---" % self.addr[0])
+        print("%d packets_transmitted, %d received, %.2f%% packets_loss," 
+              " %e bits_miss_rate, time %s"  %
+              (self.count, 
+               self.succeeded, 
+               pmiss_rate*100,
+               bmiss_rate,
+               readable_time(te-ts)
+              ))
+
     def __del__(self):
         self.client.close()
+
+
+class StoppableThread(threading.Thread):
+    """Thread class with a stop() method. The thread itself has to check
+    regularly for the stopped() condition."""
+
+    def __init__(self):
+        super(StoppableThread, self).__init__()
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def stopped(self):
+        return self._stop.isSet()
+
 
 def main():
     parser = init_parse_args()
@@ -222,14 +370,23 @@ def main():
     cnt = args.cnt
     size = args.size
     timeout = args.timeout
+    s_rate = args.rate
+    be = args.be
+    pe = 8*(size + PKT_HEADER)*be*100
     if not is_ip(ip): 
         print "Error:IP address Format is wrong!"
         parser.print_help()
         sys.exit(1)
 
     cmd = ""
+    print("The set bits error ratio is %e.\n"
+          "We recommend you to set the paket loss is %.6f%%," %
+          (be,
+           pe 
+          ))
+ 
     if c:
-        prog = Client(ip, port, c, v, cnt, size, timeout)
+        prog = Client(ip, port, c, v, cnt, size, timeout, s_rate)
         try:
             prog.run()
         except:
