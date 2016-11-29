@@ -438,7 +438,7 @@ class Client():
                readable_time(te-ts)),
                file=self.out
               )
-        print("The E(time)= %.3f ms, D(time) = %.3f ms " % 
+        print("The E(time)= %.3f ms, V(time) = %.3f ms " % 
               (calE(self.delays),
               calV(self.delays)),
               file=self.out
