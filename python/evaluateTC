@@ -5,7 +5,7 @@
 author:   melonli
 date:     2016.11.27
 """
-
+from __future__ import print_function
 import sys
 import os
 import time
@@ -35,6 +35,9 @@ def init_parse_args():
           help="Server ip(client requests to this ip), default ip 127.0.0.1.") 
     parser.add_argument('--port',default="1989", type=int,
           help="Server port(client requests to this port), default port 1989.") 
+    parser.add_argument('--pfile',default="", type=str,
+          help="The file which the  print() function outputs."
+          "If empty, print to sys.stdout") 
     parser.add_argument('--cnt',default="3", type=int,
           help="count, Stop after sending count ECHO_REQUEST packets.") 
     parser.add_argument('--rate',default="10Mbps", type=str,
@@ -72,6 +75,7 @@ def calE(l):
     Returns:
         float value of the expectation 
     """
+    if len(l)==0:return 0
     try:
         l = [float(e) for e in l]
     except:
@@ -87,6 +91,7 @@ def calV(l):
     Returns:
         float value of the Variance
     """
+    if len(l)==0:return 0
     try:
         l = [float(e) for e in l]
     except:
@@ -168,11 +173,11 @@ class Server():
 
     def run(self):
         s = self.server
-        print "Starting Server at %s %d" % self.addr
-        print "Listening for Client"
+        print("Starting Server at %s %d" % self.addr)
+        print("Listening for Client")
         while True:
             buf, addr = s.recvfrom(1500)
-            if self.v: print 'Received from %s:%s' % addr
+            if self.v: print('Received from %s:%s' % addr)
             s.sendto(buf, addr)
     
 
@@ -187,7 +192,8 @@ class Client():
     """
     
     def __init__(self, ip, port, cmd, verbose, quiet,
-                 count=3, size=56, timeout=2, s_rate="10Mbps"):
+                 count=3, size=56, timeout=2, 
+                 s_rate="10Mbps", pfile=sys.stdout):
         self.addr = (ip, port)
         self.cmd = cmd
         self.count = count
@@ -197,6 +203,7 @@ class Client():
         self.timeout = timeout
         self.lastrec_time = time.time()
         self.s_rate = s_rate
+        self.out = pfile
         self.failed = 0
         self.succeeded = 0 
 
@@ -215,7 +222,9 @@ class Client():
                self.addr[0],
                size,
                size + PKT_HEADER,
-              ))
+              ),
+              file=self.out
+            )
         c = self.client
         while cnt < count:
             cnt = cnt + 1
@@ -231,7 +240,7 @@ class Client():
                     del self.times[cnt]
                 self.failed = self.failed + 1
                 info = "Failed to send ping"
-            if self.v: print info
+            if self.v: print(info)
             #time.sleep(1)
 
     def ping_rec(self):
@@ -312,8 +321,10 @@ class Client():
                 p = os.getpid()
                 self.print_stat(ts, cur)
                 try:
-                    print 'The ping_rec is timeout (%.2f)' % timeout
+                    print('The ping_rec is timeout (%.2f)' % timeout)
                     if self.v: print("Attempt to kill %d" % p)
+                    self.client.close()
+                    self.out.close()
                     os.kill(p, signal.SIGKILL)
                 except OSError, e:
                     pass
@@ -413,23 +424,29 @@ class Client():
         """   
         pmiss_rate = float(self.count-self.succeeded)/self.count
         bmiss_rate = pmiss_rate/(8*(self.size+PKT_HEADER))
-        print("--- %s ping statistics at %s---" % (self.addr[0], self.s_rate))
-        print("%d packets_transmitted, %d received, %.2f%% packets_loss," 
-              " %e %.8f bits_miss_rate, time %s"  %
+        print("--- %s ping statistics at %s---" % 
+              (self.addr[0],self.s_rate),
+               file=self.out
+             )
+        print("%d packets_transmitted, %d received, %.6f%% packets_loss," 
+              " %e %.9f bits_miss_rate, time %s"  %
               (self.count, 
                self.succeeded, 
                pmiss_rate*100,
                bmiss_rate,
                bmiss_rate,
-               readable_time(te-ts))
+               readable_time(te-ts)),
+               file=self.out
               )
         print("The E(time)= %.3f ms, D(time) = %.3f ms " % 
               (calE(self.delays),
-              calV(self.delays))
+              calV(self.delays)),
+              file=self.out
              )
 
     def __del__(self):
         self.client.close()
+        self.out.close()
 
 
 class StoppableThread(threading.Thread):
@@ -463,9 +480,18 @@ def main():
     timeout = args.timeout
     s_rate = args.rate
     be = args.be
+    pfile = args.pfile
+    if pfile == "":
+        pf = sys.stdout
+    else:
+        try:
+            pf = open(pfile, 'a')
+        except:
+            raise Exception('OPEN_FAILED')
+
     pe = 8*(size + PKT_HEADER)*be*100
     if not is_ip(ip): 
-        print "Error:IP address Format is wrong!"
+        print("Error:IP address Format is wrong!")
         parser.print_help()
         sys.exit(1)
 
@@ -475,7 +501,8 @@ def main():
           (be,
           (size + PKT_HEADER),
           size,
-          pe)
+          pe),
+          file=pf
          )
     sr = get_rate(s_rate, 0)
     if q == 0 and sr > THRESHOLD: 
@@ -484,7 +511,8 @@ def main():
              " the sending rate can reach up to the value." % THRESHOLD)
  
     if c:
-        prog = Client(ip, port, c, v, q,  cnt, size, timeout, s_rate)
+        prog = Client(ip, port, c, v, q,  
+                cnt, size, timeout, s_rate, pf)
         try:
             prog.run()
         except:
