@@ -3,7 +3,7 @@
 """Evaluate the performance of Linux Traffic Control (TC)
 
 author:   melonli
-date:     2016.12.28
+date:     2016.11.28
 """
 from __future__ import print_function
 import sys
